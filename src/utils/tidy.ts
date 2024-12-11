@@ -153,6 +153,18 @@ export class Tidy {
 
 		// First remove elements with unwanted classes/attributes
 		const unwantedSelectors = [
+			'nav',
+			'footer',
+			'header',
+			'sidebar',
+			'navigation',
+			'form',
+			'button',
+			'input',
+			'label',
+			'select',
+			'textarea',
+			
 			// UI elements
 			'[class*="comments"]',
 			'[id*="comments"]',
@@ -180,6 +192,7 @@ export class Tidy {
 			'#ad',
 			'[class*="advertisement"]',
 			'[class*="promotion"]',
+			'[id*="siteSub"]',
 			
 			// Metadata
 			'[class*="time"]',
@@ -190,6 +203,11 @@ export class Tidy {
 			'[class*="stats"]',
 			
 			// Structural
+			'[class*="footer"]',
+			'[class*="header"]',
+			'[class*="navigation"]',
+			'[id*="sidebar"]',
+			'[id*="footer"]',
 			'[role="complementary"]',
 			'[role="banner"]',
 			'[role="navigation"]',
@@ -244,6 +262,9 @@ export class Tidy {
 			'a',
 			
 			// Other semantic elements
+			'dl',
+			'dt',
+			'dd',
 			'figure',
 			'figcaption',
 			'mark',
@@ -272,11 +293,14 @@ export class Tidy {
 			// Core attributes
 			'title',
 			'lang',
+			'class',
+			'id',
 
 			// Media attributes
 			'src',
 			'srcset',
 			'alt',
+			'alttext',
 			'href',
 
 			// Metadata
