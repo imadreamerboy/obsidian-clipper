@@ -31,10 +31,12 @@ export class Tidy {
 		debugLog('Tidy', 'Starting content extraction');
 
 		// First try to find the main content area
-		const mainContent = this.findMainContent(doc);
+		let mainContent = this.findMainContent(doc);
+		
+		// If no main content found, use the body
 		if (!mainContent) {
-			debugLog('Tidy', 'No main content found');
-			return null;
+			debugLog('Tidy', 'No main content found, using body');
+			mainContent = doc.body;
 		}
 
 		// Clean up the content
@@ -49,6 +51,7 @@ export class Tidy {
 		// First look for elements with explicit content markers
 		const mainContent = doc.querySelector([
 			'main[role="main"]',
+			'main',
 			'[role="article"]',
 			'article',
 			'[itemprop="articleBody"]',
@@ -129,26 +132,135 @@ export class Tidy {
 	}
 
 	private static cleanup(element: Element): void {
-		// Remove unwanted elements
-		const unwanted = element.querySelectorAll([
-			'script',
-			'style',
-			'iframe:not([src*="youtube"]):not([src*="vimeo"])',
-			'form',
-			'[class*="comment"]',
-			'[id*="comment"]',
+		// Remove HTML comments
+		const removeComments = (node: Node) => {
+			const walker = document.createTreeWalker(
+				node,
+				NodeFilter.SHOW_COMMENT,
+				null
+			);
+
+			const comments: Comment[] = [];
+			let comment;
+			while (comment = walker.nextNode() as Comment) {
+				comments.push(comment);
+			}
+
+			comments.forEach(comment => comment.remove());
+		};
+
+		removeComments(element);
+
+		// First remove elements with unwanted classes/attributes
+		const unwantedSelectors = [
+			// UI elements
+			'[class*="comments"]',
+			'[id*="comments"]',
 			'[class*="share"]',
 			'[class*="social"]',
+			'[class*="follow"]',
 			'[class*="related"]',
-			'nav',
-			'header:not(:first-child)',
-			'footer',
+			'[class*="author"]',
+			'[class*="byline"]',
+			'[class*="profile"]',
+			'[class*="avatar"]',
+			
+			// Interactive elements
+			'[class*="clap"]',
+			'[class*="vote"]',
+			'[class*="bookmark"]',
+			'[class*="response"]',
+			'[class*="reactions"]',
+			'[class*="tooltip"]',
+			'[class*="popup"]',
+			'[class*="modal"]',
+			
+			// Ads and promotional
 			'.ad',
 			'#ad',
-			'[role="complementary"]'
-		].join(','));
+			'[class*="advertisement"]',
+			'[class*="promotion"]',
+			
+			// Metadata
+			'[class*="time"]',
+			'[class*="timestamp"]',
+			'[class*="date"]',
+			'[class*="read-time"]',
+			'[class*="views"]',
+			'[class*="stats"]',
+			
+			// Structural
+			'[role="complementary"]',
+			'[role="banner"]',
+			'[role="navigation"]',
+			'speechify-ignore',
+			'[rel="author"]',
+		];
 
-		unwanted.forEach(el => el.remove());
+		element.querySelectorAll(unwantedSelectors.join(',')).forEach(el => el.remove());
+
+		// Define elements to keep
+		const keepElements = [
+			// Content elements
+			'p',
+			'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+			'article',
+			'section',
+			'main',
+			
+			// Lists
+			'ul',
+			'ol',
+			'li',
+			
+			// Media
+			'img',
+			'svg',
+			'picture',
+			'video',
+			'audio',
+			'iframe',
+			
+			// Text formatting
+			'strong',
+			'em',
+			'i',
+			'b',
+			'u',
+			'code',
+			'pre',
+			'blockquote',
+			'q',
+			
+			// Tables
+			'table',
+			'thead',
+			'tbody',
+			'tr',
+			'th',
+			'td',
+			
+			// Links
+			'a',
+			
+			// Other semantic elements
+			'figure',
+			'figcaption',
+			'mark',
+			'cite',
+			'sup',
+			'sub',
+			'span',
+			'br',
+		];
+
+		// Remove unwanted iframes (keep only video)
+		element.querySelectorAll('iframe').forEach(iframe => {
+			const src = iframe.getAttribute('src') || '';
+			if (!src.includes('youtube.com') && !src.includes('vimeo.com')) {
+				iframe.remove();
+			}
+		});
 
 		// Clean up attributes
 		this.cleanAttributes(element);
@@ -158,7 +270,6 @@ export class Tidy {
 		// Keep only essential attributes
 		const keepAttributes = [
 			// Core attributes
-			'id',
 			'title',
 			'lang',
 
