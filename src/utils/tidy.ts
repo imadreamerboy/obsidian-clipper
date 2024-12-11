@@ -145,8 +145,7 @@ export class Tidy {
 			'footer',
 			'.ad',
 			'#ad',
-			'[role="complementary"]',
-			'aside',
+			'[role="complementary"]'
 		].join(','));
 
 		unwanted.forEach(el => el.remove());
@@ -157,7 +156,34 @@ export class Tidy {
 
 	private static cleanAttributes(element: Element): void {
 		// Keep only essential attributes
-		const keepAttributes = ['src', 'href', 'alt', 'title', 'datetime'];
+		const keepAttributes = [
+			// Core attributes
+			'id',
+			'title',
+			'lang',
+
+			// Media attributes
+			'src',
+			'srcset',
+			'alt',
+			'href',
+
+			// Metadata
+			'content',
+			'property',
+			'name',
+			'datetime',
+			'type',
+			'value',
+
+			// Table structure
+			'colspan',
+			'rowspan',
+
+			// Citations and references
+			'rel',
+			'cite',
+		];
 		
 		const cleanElement = (el: Element) => {
 			// Remove all attributes except those in keepAttributes
@@ -173,4 +199,4 @@ export class Tidy {
 
 		cleanElement(element);
 	}
-} 
+}
