@@ -1,6 +1,33 @@
+/**
+ * Tidy — extracts the main content from a document
+ * 
+ * 1. Find the main content
+ *    - Get all block-level elements from the document
+ *    - Calculate metrics for each element (text density, link density, etc.)
+ *    - Score and select the most promising content blocks
+ * 
+ * 2. Score candidates
+ *    - Text density: ratio of text to HTML markup, higher is better
+ *    - Visual density: amount of text per pixel area, higher is better
+ *    - Link density: ratio of link text to total text, lower is better
+ *    - Natural language: how "article-like" the text is, higher is better
+ *    - Sibling similarity: similarity to surrounding elements, higher is better
+ *    - Content momentum: presence of content-like features, higher is better
+ * 
+ * 3. Tidy the winning candidates
+ *    - Remove unwanted elements (scripts, styles, social buttons)
+ *    - Remove recommendation sections (editors picks, related content)
+ *    - Remove hidden elements and print-only content
+ *    - Remove content boundaries (comments, related articles)
+ *    - Remove empty elements
+ * 
+ * 4. Final processing
+ *    - Generate excerpt from first paragraph
+ *    - Combine cleaned content elements
+ */
+
 interface TidyResult {
 	content: string;
-	title?: string;
 	excerpt?: string;
 }
 
@@ -61,7 +88,7 @@ export class Tidy {
 		'MAIN', 'NAV', 'OL', 'P', 'PRE', 'SECTION', 'TABLE', 'UL'
 	]);
 
-	private static readonly UNLIKELY_CANDIDATES = /banner|breadcrumbs|combx|comment|community|cover-wrap|disqus|extra|foot|header|legends|menu|related|remark|replies|rss|shoutbox|sidebar|skyscraper|social|sponsor|supplemental|ad-break|agegate|pagination|pager|popup|yom-remote/i;
+	private static readonly UNLIKELY_CANDIDATES = /banner|breadcrumbs|combx|comment|community|cover-wrap|disqus|extra|foot|header|legends|menu|related|remark|replies|rss|shoutbox|sidebar|skyscraper|social|sponsor|supplemental|ad-break|agegate|pagination|pager|popup|yom-remote|editors-picks|companion|aside|picks|recommended|more-from/i;
 
 	private static readonly POSITIVE_CANDIDATES = /article|body|content|entry|hentry|h-entry|main|page|pagination|post|text|blog|story/i;
 
@@ -72,7 +99,7 @@ export class Tidy {
 	private static readonly AUTH_BUTTONS = /google|facebook|twitter|email|apple|continue|social/i;
 
 	/**
-	 * Main entry point - extracts the main content from a document
+	 * Main entry point - extract the main content from a document
 	 */
 	public static parse(doc: Document): TidyResult {
 		// Get all block-level elements
@@ -89,13 +116,12 @@ export class Tidy {
 
 		return {
 			content,
-			title: this.findTitle(doc),
 			excerpt: this.generateExcerpt(content)
 		};
 	}
 
 	/**
-	 * Gets all block-level elements that might contain content
+	 * Get all block-level elements that might contain content
 	 */
 	private static getBlockElements(root: Element): Element[] {
 		const elements: Element[] = [];
@@ -124,7 +150,7 @@ export class Tidy {
 	}
 
 	/**
-	 * Calculates various metrics for an element to determine if it's content
+	 * Calculate various metrics for an element to determine if it's content
 	 */
 	private static calculateMetrics(element: Element): ElementMetrics {
 		return {
@@ -139,7 +165,7 @@ export class Tidy {
 	}
 
 	/**
-	 * Calculates text density (ratio of text to HTML)
+	 * Calculate text density (ratio of text to HTML)
 	 */
 	private static getTextDensity(element: Element): number {
 		const text = element.textContent || '';
@@ -149,7 +175,7 @@ export class Tidy {
 	}
 
 	/**
-	 * Calculates visual density (text per pixel area)
+	 * Calculate visual density (text per pixel area)
 	 */
 	private static getVisualDensity(element: Element): number {
 		const rect = element.getBoundingClientRect();
@@ -160,7 +186,7 @@ export class Tidy {
 	}
 
 	/**
-	 * Calculates link density (ratio of link text to all text)
+	 * Calculate link density (ratio of link text to all text)
 	 */
 	private static getLinkDensity(element: Element): number {
 		const text = element.textContent || '';
@@ -174,7 +200,7 @@ export class Tidy {
 	}
 
 	/**
-	 * Scores text based on natural language characteristics
+	 * Score text based on natural language characteristics
 	 */
 	private static getNaturalLanguageScore(element: Element): number {
 		const text = element.textContent || '';
@@ -198,7 +224,7 @@ export class Tidy {
 	}
 
 	/**
-	 * Scores element based on similarity to siblings
+	 * Score element based on similarity to siblings
 	 */
 	private static getSiblingSimilarity(element: Element): number {
 		const siblings = Array.from(element.parentElement?.children || []);
@@ -228,7 +254,7 @@ export class Tidy {
 	}
 
 	/**
-	 * Scores element based on content momentum (similarity to nearby content)
+	 * Score element based on content momentum (similarity to nearby content)
 	 */
 	private static getContentMomentum(element: Element): number {
 		let score = 0;
@@ -238,9 +264,17 @@ export class Tidy {
 			score += 0.25;
 		}
 
-		// Reduce score for unlikely content
-		if (this.UNLIKELY_CANDIDATES.test(element.className + ' ' + element.id)) {
-			score -= 0.25;
+		// More aggressively reduce score for unlikely content
+		if (this.UNLIKELY_CANDIDATES.test(element.className + ' ' + element.id) ||
+			element.tagName === 'ASIDE' ||
+			element.getAttribute('aria-label')?.includes('companion')) {
+			score -= 0.5; // Increased penalty
+		}
+
+		// Check for high link density with multiple articles
+		const articles = element.getElementsByTagName('article');
+		if (articles.length > 1) {
+			score -= 0.25; // Penalty for multiple articles (common in recommendation sections)
 		}
 
 		// Boost score if element has paragraphs
@@ -254,7 +288,7 @@ export class Tidy {
 		return Math.max(0, Math.min(1, score));
 	}
 	/**
-	 * Determines if an element is hidden in print view
+	 * Determine if an element is hidden in print view
 	 */
 	private static isHiddenForPrint(element: Element): boolean {
 		const style = window.getComputedStyle(element);
@@ -285,7 +319,7 @@ export class Tidy {
 	}
 
 	/**
-	 * Determines if an element is likely UI chrome rather than content
+	 * Determine if an element is likely UI chrome rather than content
 	 */
 	private static isUiElement(element: Element): boolean {
 		// Check for common UI patterns
@@ -302,7 +336,7 @@ export class Tidy {
 	}
 
 	/**
-	 * Determines if an element is hidden
+	 * Determine if an element is hidden
 	 */
 	private static isHidden(element: Element): boolean {
 		const style = window.getComputedStyle(element);
@@ -344,7 +378,7 @@ export class Tidy {
 	}
 
 	/**
-	 * Finds the most likely content elements based on calculated metrics
+	 * Find the most likely content elements based on computed metrics
 	 */
 	private static findContentElements(metrics: ElementMetrics[]): Element[] {
 		// Score each element based on its metrics
@@ -388,8 +422,8 @@ export class Tidy {
 	}
 
 	/**
-	 * Calculates final content score based on metrics
-	 * Returns a normalized score between 0 and 1
+	 * Calculate final content score based on metrics
+	 * Return a normalized score between 0 and 1
 	 */
 	private static calculateContentScore(metrics: ElementMetrics): number {
 		const score = (
@@ -406,7 +440,7 @@ export class Tidy {
 	}
 
 	/**
-	 * Extracts and cleans content from selected elements
+	 * Extract and clean content from selected elements
 	 */
 	private static extractContent(elements: Element[]): string {
 		// Clone elements to avoid modifying the original DOM
@@ -424,7 +458,7 @@ export class Tidy {
 	}
 
 	/**
-	 * Cleans an element of unwanted content
+	 * Clean an element of unwanted content
 	 */
 	private static cleanElement(element: Element): void {
 		// First remove obvious unwanted elements
@@ -440,6 +474,14 @@ export class Tidy {
 		
 		unwanted.forEach(el => el.remove());
 
+		// Remove recommendation sections
+		const sections = element.querySelectorAll('div, section, aside');
+		sections.forEach(section => {
+			if (this.isRecommendationSection(section)) {
+				section.remove();
+			}
+		});
+
 		// Remove hidden elements
 		const allElements = element.querySelectorAll('*');
 		allElements.forEach(el => {
@@ -449,8 +491,8 @@ export class Tidy {
 		});
 
 		// Then check for content boundaries
-		const sections = element.querySelectorAll('section, div');
-		sections.forEach(section => {
+		const contentBoundaries = element.querySelectorAll('section, div');
+		contentBoundaries.forEach(section => {
 			if (this.isPaywallElement(section) || this.isContentBoundary(section)) {
 				section.remove();
 			}
@@ -461,9 +503,8 @@ export class Tidy {
 		empties.forEach(el => el.remove());
 	}
 
-
 	/**
-	 * Determines if an element is likely a paywall/membership prompt
+	 * Determine if an element is likely a paywall/membership prompt
 	 */
 	private static isPaywallElement(element: Element): boolean {
 		const text = element.textContent || '';
@@ -496,31 +537,7 @@ export class Tidy {
 	}
 
 	/**
-	 * Finds the article title
-	 */
-	private static findTitle(doc: Document): string | undefined {
-		// Try OpenGraph title
-		const ogTitle = doc.querySelector('meta[property="og:title"]');
-		if (ogTitle?.getAttribute('content')) {
-			return ogTitle.getAttribute('content')!;
-		}
-
-		// Try main heading
-		const h1 = doc.querySelector('h1');
-		if (h1?.textContent) {
-			return h1.textContent.trim();
-		}
-
-		// Try document title
-		if (doc.title) {
-			return doc.title.split('|')[0].trim();
-		}
-
-		return undefined;
-	}
-
-	/**
-	 * Generates an excerpt from the content
+	 * Generate an excerpt from the content
 	 */
 	private static generateExcerpt(content: string): string | undefined {
 		const div = document.createElement('div');
@@ -539,7 +556,7 @@ export class Tidy {
 	}
 
 	/**
-	 * Determines if an element is likely a content boundary (related articles, etc)
+	 * Determine if an element is likely a content boundary (related articles, etc)
 	 */
 	private static isContentBoundary(element: Element): boolean {
 		const text = element.textContent || '';
@@ -571,6 +588,35 @@ export class Tidy {
 			if (similarChildren.length > children.length * 0.7) { // 70% similar children
 				return true;
 			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Determine if an element is likely a recommendation/picks section
+	 */
+	private static isRecommendationSection(element: Element): boolean {
+		// Check for common structural patterns of recommendation sections
+		const hasMultipleArticles = element.querySelectorAll('article').length > 1;
+		const hasMultipleLinks = element.querySelectorAll('a').length > 2;
+		const hasMultipleImages = element.querySelectorAll('img').length > 2;
+
+		// Check for grid/list layout of similar items
+		const children = Array.from(element.children);
+		const hasUniformStructure = children.length > 2 && children.every(child => {
+			return child.querySelector('a') && 
+				(child.querySelector('img') || child.querySelector('h2, h3'));
+		});
+
+		// Check for common recommendation section structure:
+		// - Multiple similar-sized items
+		// - Each item has image + title + link
+		// - Items are arranged in a grid/list
+		if ((hasMultipleArticles || hasUniformStructure) && 
+			hasMultipleLinks && 
+			hasMultipleImages) {
+			return true;
 		}
 
 		return false;
