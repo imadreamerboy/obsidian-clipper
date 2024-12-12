@@ -28,6 +28,10 @@ export class Tidy {
 
 	private static readonly CONTENT_BOUNDARY_INDICATORS = /more|related|popular|recommended|trending|similar|also|read|next|prev|suggested/i;
 
+	private static readonly PAYWALL_INDICATORS = /sign[- ]?up|subscribe|membership|register|create[- ]account|log[- ]?in|sign[- ]?in|already[- ]have[- ]an[- ]account|continue reading|read more|full story|unlock|premium/i;
+
+	private static readonly AUTH_BUTTONS = /google|facebook|twitter|email|apple|continue|social/i;
+
 	/**
 	 * Main entry point - extracts the main content from a document
 	 */
@@ -210,6 +214,53 @@ export class Tidy {
 
 		return Math.max(0, Math.min(1, score));
 	}
+	/**
+	 * Determines if an element is hidden in print view
+	 */
+	private static isHiddenForPrint(element: Element): boolean {
+		const style = window.getComputedStyle(element);
+		
+		// Check explicit print hiding classes/attributes
+		if (element.matches('[class*="hide-for-print"], [class*="no-print"], [class*="noprint"]')) {
+			return true;
+		}
+
+		// Check print media query styles
+		let printStyle: CSSStyleDeclaration | null = null;
+		try {
+			// Create a print media query
+			const mediaQuery = window.matchMedia('print');
+			if (mediaQuery.matches) {
+				printStyle = style;
+			}
+		} catch (e) {
+			// Fallback if matchMedia isn't supported
+			return false;
+		}
+
+		if (printStyle) {
+			return printStyle.display === 'none' || printStyle.visibility === 'hidden';
+		}
+
+		return false;
+	}
+
+	/**
+	 * Determines if an element is likely UI chrome rather than content
+	 */
+	private static isUiElement(element: Element): boolean {
+		// Check for common UI patterns
+		const isButton = element.matches('button, [role="button"], .button, [class*="btn-"]');
+		const isIcon = element.matches('[class*="icon"], [class*="emoji"], svg');
+		const isToolbar = element.matches('[class*="toolbar"], [class*="controls"], [role="toolbar"]');
+		const isWidget = element.matches('[class*="widget"], [class*="follow"], [class*="share"]');
+
+		if (isButton || isIcon || isToolbar || isWidget) {
+			return true;
+		}
+
+		return false;
+	}
 
 	/**
 	 * Determines if an element is hidden
@@ -308,15 +359,25 @@ export class Tidy {
 			'[class*="social"], [class*="share"], ' +
 			'[class*="comments"], [class*="related"], ' +
 			'[class*="widget"], [class*="ad-"], ' +
+			'[class*="signup"], [class*="subscribe"], ' +
+			'[class*="follow"], [class*="toolbar"], ' +
 			'iframe:not([src*="youtube"]):not([src*="vimeo"])'
 		);
 		
 		unwanted.forEach(el => el.remove());
 
+		// Remove elements hidden in print view and UI elements
+		const allElements = element.querySelectorAll('*');
+		allElements.forEach(el => {
+			if (this.isHiddenForPrint(el) || this.isUiElement(el)) {
+				el.remove();
+			}
+		});
+
 		// Then check for content boundaries
 		const sections = element.querySelectorAll('section, div');
 		sections.forEach(section => {
-			if (this.isContentBoundary(section)) {
+			if (this.isPaywallElement(section) || this.isContentBoundary(section)) {
 				section.remove();
 			}
 		});
@@ -324,6 +385,40 @@ export class Tidy {
 		// Remove empty elements
 		const empties = element.querySelectorAll('p:empty, div:empty, span:empty');
 		empties.forEach(el => el.remove());
+	}
+
+
+	/**
+	 * Determines if an element is likely a paywall/membership prompt
+	 */
+	private static isPaywallElement(element: Element): boolean {
+		const text = element.textContent || '';
+
+		// Check for paywall-related text
+		if (this.PAYWALL_INDICATORS.test(text)) {
+			// Look for authentication-related buttons/links
+			const links = Array.from(element.getElementsByTagName('a'));
+			const buttons = Array.from(element.getElementsByTagName('button'));
+			const authElements = [...links, ...buttons];
+			
+			const hasAuthButtons = authElements.some(el => 
+				this.AUTH_BUTTONS.test(el.textContent || '') ||
+				this.AUTH_BUTTONS.test(el.className)
+			);
+
+			if (hasAuthButtons) {
+				return true;
+			}
+		}
+
+		// Check for fixed/absolute positioning (common for overlays)
+		const style = window.getComputedStyle(element);
+		if ((style.position === 'fixed' || style.position === 'absolute') &&
+			(style.zIndex !== 'auto' && parseInt(style.zIndex) > 1)) {
+			return true;
+		}
+
+		return false;
 	}
 
 	/**
