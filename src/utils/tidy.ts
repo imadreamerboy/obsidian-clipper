@@ -306,10 +306,41 @@ export class Tidy {
 	 */
 	private static isHidden(element: Element): boolean {
 		const style = window.getComputedStyle(element);
-		return style.display === 'none' || 
-			   style.visibility === 'hidden' ||
-			   style.opacity === '0' ||
-			   (style.position === 'absolute' && style.left === '-9999px');
+		
+		// Check various ways elements can be hidden
+		return (
+			// Display none
+			style.display === 'none' ||
+			
+			// Visibility hidden
+			style.visibility === 'hidden' ||
+			
+			// Opacity 0
+			style.opacity === '0' ||
+			
+			// Zero dimensions
+			(style.width === '0px' && style.height === '0px') ||
+			
+			// Moved off-screen
+			(style.position === 'absolute' && (
+				style.left === '-9999px' ||
+				parseInt(style.left) < -1000 ||
+				parseInt(style.right) < -1000 ||
+				parseInt(style.top) < -1000 ||
+				parseInt(style.bottom) < -1000
+			)) ||
+			
+			// Collapsed
+			style.maxHeight === '0px' ||
+			
+			// Hidden overflow with zero dimensions
+			(style.overflow === 'hidden' && 
+				(style.height === '0px' || style.width === '0px')) ||
+			
+			// Explicitly hidden
+			element.hasAttribute('hidden') ||
+			element.getAttribute('aria-hidden') === 'true'
+		);
 	}
 
 	/**
@@ -409,10 +440,10 @@ export class Tidy {
 		
 		unwanted.forEach(el => el.remove());
 
-		// Remove elements hidden in print view and UI elements
+		// Remove hidden elements
 		const allElements = element.querySelectorAll('*');
 		allElements.forEach(el => {
-			if (this.isHiddenForPrint(el) || this.isUiElement(el)) {
+			if (this.isHidden(el) || this.isHiddenForPrint(el) || this.isUiElement(el)) {
 				el.remove();
 			}
 		});
