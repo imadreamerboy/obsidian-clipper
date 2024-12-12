@@ -14,6 +14,45 @@ interface ElementMetrics {
 	contentMomentum: number;
 }
 
+/**
+ * Scoring system for content detection
+ * Each metric is weighted and combined to determine if an element contains valuable content
+ */
+const SCORING_WEIGHTS = {
+	// Text-rich elements with minimal markup score higher
+	TEXT_DENSITY: 1.5,
+
+	// Dense text areas (like paragraphs) score higher than sparse ones (like navigation)
+	VISUAL_DENSITY: 1.0,
+
+	// Elements with fewer links score higher (1 - linkDensity)
+	LINK_DENSITY: 1.0,
+
+	// Natural language patterns (sentences, punctuation) score highest
+	NATURAL_LANGUAGE: 2.0,
+
+	// Some similarity to siblings suggests content sections
+	SIBLING_SIMILARITY: 0.5,
+
+	// Content indicators like paragraphs and figures boost score
+	CONTENT_MOMENTUM: 1.0
+} as const;
+
+// Total of all weights, used for normalization
+const TOTAL_WEIGHTS = Object.values(SCORING_WEIGHTS).reduce((a, b) => a + b, 0);
+
+/**
+ * Minimum score (0-1) required for an element to be considered content
+ * Current threshold requires elements to score at least 50% of maximum possible score
+ */
+const MINIMUM_CONTENT_SCORE = 0.5;
+
+/**
+ * Score decay factor for consecutive elements
+ * Each subsequent element must score at least 70% of the previous element's score
+ */
+const SCORE_DECAY_FACTOR = 0.7;
+
 export class Tidy {
 	private static readonly BLOCK_ELEMENTS = new Set([
 		'ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'DETAILS', 'DIALOG', 'DD', 
@@ -303,7 +342,7 @@ export class Tidy {
 
 			if (!isChildOfSelected && !isParentOfSelected) {
 				if (contentElements.length === 0 || 
-					(score > 0.5 && score > lastScore * 0.7)) {
+					(score > MINIMUM_CONTENT_SCORE && score > lastScore * SCORE_DECAY_FACTOR)) {
 					contentElements.push(element);
 					lastScore = score;
 				}
@@ -319,16 +358,20 @@ export class Tidy {
 
 	/**
 	 * Calculates final content score based on metrics
+	 * Returns a normalized score between 0 and 1
 	 */
 	private static calculateContentScore(metrics: ElementMetrics): number {
-		return (
-			metrics.textDensity * 1.5 +
-			metrics.visualDensity * 1.0 +
-			(1 - metrics.linkDensity) * 1.0 +
-			metrics.naturalLanguageScore * 2.0 +
-			metrics.siblingSimilarity * 0.5 +
-			metrics.contentMomentum * 1.0
-		) / 7;
+		const score = (
+			metrics.textDensity * SCORING_WEIGHTS.TEXT_DENSITY +
+			metrics.visualDensity * SCORING_WEIGHTS.VISUAL_DENSITY +
+			(1 - metrics.linkDensity) * SCORING_WEIGHTS.LINK_DENSITY +
+			metrics.naturalLanguageScore * SCORING_WEIGHTS.NATURAL_LANGUAGE +
+			metrics.siblingSimilarity * SCORING_WEIGHTS.SIBLING_SIMILARITY +
+			metrics.contentMomentum * SCORING_WEIGHTS.CONTENT_MOMENTUM
+		);
+
+		// Normalize score to 0-1 range
+		return score / TOTAL_WEIGHTS;
 	}
 
 	/**
