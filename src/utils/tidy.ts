@@ -98,6 +98,24 @@ export class Tidy {
 
 	private static readonly AUTH_BUTTONS = /google|facebook|twitter|email|apple|continue|social/i;
 
+	private static readonly META_INDICATORS = {
+		// Common class/id patterns for metadata sections
+		patterns: /meta|author|byline|date|time|publish|post-info|article-info|entry-info|info-box|article-meta|post-meta/i,
+
+		// Common metadata element combinations
+		elements: new Set([
+			'time',
+			'datetime',
+			'meta',
+			'author',
+			'byline',
+			'dateline'
+		]),
+
+		// Common metadata text patterns
+		text: /^(by|posted|published|updated|written by|author|date|on)\s*:?\s*/i
+	};
+
 	/**
 	 * Main entry point - extract the main content from a document
 	 */
@@ -474,6 +492,14 @@ export class Tidy {
 		
 		unwanted.forEach(el => el.remove());
 
+		// Remove metadata sections
+		const allElements = element.querySelectorAll('*');
+		allElements.forEach(el => {
+			if (this.isMetadata(el)) {
+				el.remove();
+			}
+		});
+
 		// Remove recommendation sections
 		const sections = element.querySelectorAll('div, section, aside');
 		sections.forEach(section => {
@@ -483,7 +509,6 @@ export class Tidy {
 		});
 
 		// Remove hidden elements
-		const allElements = element.querySelectorAll('*');
 		allElements.forEach(el => {
 			if (this.isHidden(el) || this.isHiddenForPrint(el) || this.isUiElement(el)) {
 				el.remove();
@@ -616,6 +641,44 @@ export class Tidy {
 		if ((hasMultipleArticles || hasUniformStructure) && 
 			hasMultipleLinks && 
 			hasMultipleImages) {
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Determine if an element is likely metadata
+	 */
+	private static isMetadata(element: Element): boolean {
+		const classAndId = (element.className + ' ' + element.id).toLowerCase();
+		const text = element.textContent?.trim() || '';
+
+		// Check class/id patterns
+		if (this.META_INDICATORS.patterns.test(classAndId)) {
+			return true;
+		}
+
+		// Check for metadata elements
+		if (this.META_INDICATORS.elements.has(element.tagName.toLowerCase())) {
+			return true;
+		}
+
+		// Check for metadata text patterns
+		if (this.META_INDICATORS.text.test(text)) {
+			return true;
+		}
+
+		// Check for typical metadata structure:
+		// - Short text with date/time format
+		// - Author name with links/images
+		// - Social media links
+		const hasDateTime = /\d{1,2}[:/-]\d{1,2}[:/-]\d{2,4}/.test(text) ||
+			element.querySelector('time, [datetime]') !== null;
+		const hasAuthorStructure = element.querySelector('a[href*="author"], img[alt*="author"], .author-avatar');
+		const hasSocialLinks = element.querySelectorAll('a[href*="twitter"], a[href*="facebook"], a[href*="linkedin"]').length > 0;
+
+		if ((hasDateTime || hasAuthorStructure || hasSocialLinks) && text.length < 200) {
 			return true;
 		}
 
