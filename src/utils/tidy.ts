@@ -1,176 +1,409 @@
-import { debugLog } from './debug';
+interface TidyResult {
+	content: string;
+	title?: string;
+	excerpt?: string;
+}
 
-interface ContentScore {
-	score: number;
+interface ElementMetrics {
 	element: Element;
+	textDensity: number;
+	visualDensity: number;
+	linkDensity: number;
+	naturalLanguageScore: number;
+	siblingSimilarity: number;
+	contentMomentum: number;
 }
 
 export class Tidy {
-	private static POSITIVE_PATTERNS = /article|content|main|post|body|text|blog|story/i;
-	private static NEGATIVE_PATTERNS = /comment|meta|footer|footnote|foot|nav|sidebar|banner|ad|popup|menu/i;
-	private static BLOCK_ELEMENTS = ['div', 'section', 'article', 'main'];
+	private static readonly BLOCK_ELEMENTS = new Set([
+		'ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'DETAILS', 'DIALOG', 'DD', 
+		'DIV', 'DL', 'DT', 'FIELDSET', 'FIGCAPTION', 'FIGURE', 'FOOTER', 'FORM', 
+		'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HEADER', 'HGROUP', 'HR', 'LI', 
+		'MAIN', 'NAV', 'OL', 'P', 'PRE', 'SECTION', 'TABLE', 'UL'
+	]);
+
+	private static readonly UNLIKELY_CANDIDATES = /banner|breadcrumbs|combx|comment|community|cover-wrap|disqus|extra|foot|header|legends|menu|related|remark|replies|rss|shoutbox|sidebar|skyscraper|social|sponsor|supplemental|ad-break|agegate|pagination|pager|popup|yom-remote/i;
+
+	private static readonly POSITIVE_CANDIDATES = /article|body|content|entry|hentry|h-entry|main|page|pagination|post|text|blog|story/i;
+
+	private static readonly CONTENT_BOUNDARY_INDICATORS = /more|related|popular|recommended|trending|similar|also|read|next|prev|suggested/i;
 
 	/**
-	 * Main entry point - cleans up HTML content and returns the main content
+	 * Main entry point - extracts the main content from a document
 	 */
-	static parseFromString(html: string) {
-		try {
-			const parser = new DOMParser();
-			const doc = parser.parseFromString(html, 'text/html');
-			return this.parse(doc);
-		} catch (error) {
-			console.error('Error parsing HTML:', error);
-			return null;
-		}
-	}
+	public static parse(doc: Document): TidyResult {
+		// Get all block-level elements
+		const blockElements = this.getBlockElements(doc.body);
+		
+		// Calculate metrics for each element
+		const elementMetrics = blockElements.map(element => this.calculateMetrics(element));
 
-	/**
-	 * Internal method to process an already parsed document
-	 */
-	static parse(doc: Document) {
-		debugLog('Tidy', 'Starting content extraction');
+		// Find the most promising content blocks
+		const contentElements = this.findContentElements(elementMetrics);
 
-		// First try to find the main content area
-		const mainContent = this.findMainContent(doc);
-		if (!mainContent) {
-			debugLog('Tidy', 'No main content found');
-			return null;
-		}
-
-		// Clean up the content
-		this.cleanup(mainContent);
+		// Extract and clean the content
+		const content = this.extractContent(contentElements);
 
 		return {
-			content: mainContent.outerHTML
+			content,
+			title: this.findTitle(doc),
+			excerpt: this.generateExcerpt(content)
 		};
 	}
 
-	private static findMainContent(doc: Document): Element | null {
-		// First look for elements with explicit content markers
-		const mainContent = doc.querySelector([
-			'main[role="main"]',
-			'[role="article"]',
-			'article',
-			'[itemprop="articleBody"]',
-			'.post-content',
-			'.article-content',
-			'#article-content',
-			'.content-article',
-		].join(','));
-
-		if (mainContent) {
-			debugLog('Tidy', 'Found main content via selector');
-			return mainContent;
-		}
-
-		// Fall back to scoring elements
-		const candidates = this.scoreElements(doc);
-		if (candidates.length > 0) {
-			debugLog('Tidy', `Found ${candidates.length} candidates, selecting highest scoring`);
-			return candidates[0].element;
-		}
-
-		return null;
-	}
-
-	private static scoreElements(doc: Document): ContentScore[] {
-		const candidates: ContentScore[] = [];
-
-		this.BLOCK_ELEMENTS.forEach(tag => {
-			Array.from(doc.getElementsByTagName(tag)).forEach((element: Element) => {
-				const score = this.scoreElement(element);
-				if (score > 0) {
-					candidates.push({ score, element });
+	/**
+	 * Gets all block-level elements that might contain content
+	 */
+	private static getBlockElements(root: Element): Element[] {
+		const elements: Element[] = [];
+		const walker = document.createTreeWalker(
+			root,
+			NodeFilter.SHOW_ELEMENT,
+			{
+				acceptNode: (node: Element) => {
+					if (!this.BLOCK_ELEMENTS.has(node.tagName)) {
+						return NodeFilter.FILTER_SKIP;
+					}
+					if (this.isHidden(node)) {
+						return NodeFilter.FILTER_REJECT;
+					}
+					return NodeFilter.FILTER_ACCEPT;
 				}
-			});
-		});
+			}
+		);
 
-		return candidates.sort((a, b) => b.score - a.score);
+		let node: Element | null;
+		while (node = walker.nextNode() as Element) {
+			elements.push(node);
+		}
+
+		return elements;
 	}
 
-	private static scoreElement(element: Element): number {
+	/**
+	 * Calculates various metrics for an element to determine if it's content
+	 */
+	private static calculateMetrics(element: Element): ElementMetrics {
+		return {
+			element,
+			textDensity: this.getTextDensity(element),
+			visualDensity: this.getVisualDensity(element),
+			linkDensity: this.getLinkDensity(element),
+			naturalLanguageScore: this.getNaturalLanguageScore(element),
+			siblingSimilarity: this.getSiblingSimilarity(element),
+			contentMomentum: this.getContentMomentum(element)
+		};
+	}
+
+	/**
+	 * Calculates text density (ratio of text to HTML)
+	 */
+	private static getTextDensity(element: Element): number {
+		const text = element.textContent || '';
+		const html = element.innerHTML;
+		if (!html) return 0;
+		return text.length / html.length;
+	}
+
+	/**
+	 * Calculates visual density (text per pixel area)
+	 */
+	private static getVisualDensity(element: Element): number {
+		const rect = element.getBoundingClientRect();
+		const area = rect.width * rect.height;
+		if (!area) return 0;
+		const text = element.textContent || '';
+		return text.length / area;
+	}
+
+	/**
+	 * Calculates link density (ratio of link text to all text)
+	 */
+	private static getLinkDensity(element: Element): number {
+		const text = element.textContent || '';
+		const links = Array.from(element.getElementsByTagName('a'));
+		let linkText = '';
+		for (const link of links) {
+			linkText += link.textContent || '';
+		}
+		if (!text.length) return 0;
+		return linkText.length / text.length;
+	}
+
+	/**
+	 * Scores text based on natural language characteristics
+	 */
+	private static getNaturalLanguageScore(element: Element): number {
+		const text = element.textContent || '';
+		if (!text) return 0;
+
 		let score = 0;
 
-		// Score based on element properties
-		const className = element.className.toLowerCase();
-		const id = element.id.toLowerCase();
+		// Look for sentence-like structures
+		score += (text.match(/[.!?]+(\s|$)/g) || []).length * 0.5;
 
-		// Check positive patterns
-		if (this.POSITIVE_PATTERNS.test(className) || this.POSITIVE_PATTERNS.test(id)) {
-			score += 25;
-		}
+		// Look for capital letters starting sentences
+		score += (text.match(/[.!?]\s+[A-Z]/g) || []).length * 0.3;
 
-		// Check negative patterns
-		if (this.NEGATIVE_PATTERNS.test(className) || this.NEGATIVE_PATTERNS.test(id)) {
-			score -= 25;
-		}
+		// Penalize ALL CAPS text
+		score -= (text.match(/[A-Z]{4,}/g) || []).length * 0.3;
 
-		// Score based on content
-		const text = element.textContent || '';
-		const words = text.split(/\s+/).length;
-		score += Math.min(Math.floor(words / 100), 3);
+		// Look for varied punctuation
+		score += new Set(text.match(/[,;:'"]/g) || []).size * 0.2;
 
-		// Score based on link density
-		const links = element.getElementsByTagName('a');
-		const linkText = Array.from(links).reduce((acc, link) => acc + (link.textContent?.length || 0), 0);
-		const linkDensity = text.length ? linkText / text.length : 0;
-		if (linkDensity > 0.5) {
-			score -= 10;
-		}
-
-		// Score based on presence of meaningful elements
-		const paragraphs = element.getElementsByTagName('p').length;
-		score += paragraphs;
-
-		const images = element.getElementsByTagName('img').length;
-		score += Math.min(images * 3, 9);
-
-		return score;
+		return Math.max(0, Math.min(1, score / 10));
 	}
 
-	private static cleanup(element: Element): void {
-		// Remove unwanted elements
-		const unwanted = element.querySelectorAll([
-			'script',
-			'style',
-			'iframe:not([src*="youtube"]):not([src*="vimeo"])',
-			'form',
-			'[class*="comment"]',
-			'[id*="comment"]',
-			'[class*="share"]',
-			'[class*="social"]',
-			'[class*="related"]',
-			'nav',
-			'header:not(:first-child)',
-			'footer',
-			'.ad',
-			'#ad',
-			'[role="complementary"]',
-			'aside',
-		].join(','));
+	/**
+	 * Scores element based on similarity to siblings
+	 */
+	private static getSiblingSimilarity(element: Element): number {
+		const siblings = Array.from(element.parentElement?.children || []);
+		if (siblings.length < 2) return 0;
 
+		let similarSiblings = 0;
+		const elementClasses = new Set(Array.from(element.classList));
+		const elementTags = new Set(Array.from(element.children).map(el => el.tagName));
+
+		for (const sibling of siblings) {
+			if (sibling === element) continue;
+
+			// Compare class names
+			const siblingClasses = new Set(Array.from(sibling.classList));
+			const classIntersection = new Set([...elementClasses].filter(x => siblingClasses.has(x)));
+			
+			// Compare child element types
+			const siblingTags = new Set(Array.from(sibling.children).map(el => el.tagName));
+			const tagIntersection = new Set([...elementTags].filter(x => siblingTags.has(x)));
+
+			if (classIntersection.size > 0 || tagIntersection.size > 0) {
+				similarSiblings++;
+			}
+		}
+
+		return similarSiblings / (siblings.length - 1);
+	}
+
+	/**
+	 * Scores element based on content momentum (similarity to nearby content)
+	 */
+	private static getContentMomentum(element: Element): number {
+		let score = 0;
+
+		// Boost score for positive content indicators
+		if (this.POSITIVE_CANDIDATES.test(element.className + ' ' + element.id)) {
+			score += 0.25;
+		}
+
+		// Reduce score for unlikely content
+		if (this.UNLIKELY_CANDIDATES.test(element.className + ' ' + element.id)) {
+			score -= 0.25;
+		}
+
+		// Boost score if element has paragraphs
+		const paragraphs = element.getElementsByTagName('p');
+		score += Math.min(1, paragraphs.length * 0.2);
+
+		// Boost score if element has images with captions
+		const figures = element.getElementsByTagName('figure');
+		score += Math.min(0.5, figures.length * 0.1);
+
+		return Math.max(0, Math.min(1, score));
+	}
+
+	/**
+	 * Determines if an element is hidden
+	 */
+	private static isHidden(element: Element): boolean {
+		const style = window.getComputedStyle(element);
+		return style.display === 'none' || 
+			   style.visibility === 'hidden' ||
+			   style.opacity === '0' ||
+			   (style.position === 'absolute' && style.left === '-9999px');
+	}
+
+	/**
+	 * Finds the most likely content elements based on calculated metrics
+	 */
+	private static findContentElements(metrics: ElementMetrics[]): Element[] {
+		// Score each element based on its metrics
+		const scoredElements = metrics.map(m => ({
+			element: m.element,
+			score: this.calculateContentScore(m)
+		}));
+
+		// Sort by score descending
+		scoredElements.sort((a, b) => b.score - a.score);
+
+		// Take the highest scoring elements that form a coherent content block
+		const contentElements: Element[] = [];
+		let lastScore = 0;
+
+		for (const {element, score} of scoredElements) {
+			// Skip if this element is a child of any already selected elements
+			const isChildOfSelected = contentElements.some(selectedElement => 
+				selectedElement.contains(element)
+			);
+
+			// Skip if this element is a parent of any already selected elements
+			const isParentOfSelected = contentElements.some(selectedElement => 
+				element.contains(selectedElement)
+			);
+
+			if (!isChildOfSelected && !isParentOfSelected) {
+				if (contentElements.length === 0 || 
+					(score > 0.5 && score > lastScore * 0.7)) {
+					contentElements.push(element);
+					lastScore = score;
+				}
+			}
+		}
+
+		// Sort elements by their position in the document
+		return contentElements.sort((a, b) => {
+			const position = a.compareDocumentPosition(b);
+			return position & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
+		});
+	}
+
+	/**
+	 * Calculates final content score based on metrics
+	 */
+	private static calculateContentScore(metrics: ElementMetrics): number {
+		return (
+			metrics.textDensity * 1.5 +
+			metrics.visualDensity * 1.0 +
+			(1 - metrics.linkDensity) * 1.0 +
+			metrics.naturalLanguageScore * 2.0 +
+			metrics.siblingSimilarity * 0.5 +
+			metrics.contentMomentum * 1.0
+		) / 7;
+	}
+
+	/**
+	 * Extracts and cleans content from selected elements
+	 */
+	private static extractContent(elements: Element[]): string {
+		// Clone elements to avoid modifying the original DOM
+		const contentElements = elements.map(el => el.cloneNode(true) as Element);
+
+		// Clean the content
+		for (const element of contentElements) {
+			this.cleanElement(element);
+		}
+
+		// Combine the content
+		return contentElements
+			.map(element => element.outerHTML)
+			.join('\n');
+	}
+
+	/**
+	 * Cleans an element of unwanted content
+	 */
+	private static cleanElement(element: Element): void {
+		// First remove obvious unwanted elements
+		const unwanted = element.querySelectorAll(
+			'script, style, link, meta, ' +
+			'[class*="social"], [class*="share"], ' +
+			'[class*="comments"], [class*="related"], ' +
+			'[class*="widget"], [class*="ad-"], ' +
+			'iframe:not([src*="youtube"]):not([src*="vimeo"])'
+		);
+		
 		unwanted.forEach(el => el.remove());
 
-		// Clean up attributes
-		this.cleanAttributes(element);
+		// Then check for content boundaries
+		const sections = element.querySelectorAll('section, div');
+		sections.forEach(section => {
+			if (this.isContentBoundary(section)) {
+				section.remove();
+			}
+		});
+
+		// Remove empty elements
+		const empties = element.querySelectorAll('p:empty, div:empty, span:empty');
+		empties.forEach(el => el.remove());
 	}
 
-	private static cleanAttributes(element: Element): void {
-		// Keep only essential attributes
-		const keepAttributes = ['src', 'href', 'alt', 'title', 'datetime'];
+	/**
+	 * Finds the article title
+	 */
+	private static findTitle(doc: Document): string | undefined {
+		// Try OpenGraph title
+		const ogTitle = doc.querySelector('meta[property="og:title"]');
+		if (ogTitle?.getAttribute('content')) {
+			return ogTitle.getAttribute('content')!;
+		}
+
+		// Try main heading
+		const h1 = doc.querySelector('h1');
+		if (h1?.textContent) {
+			return h1.textContent.trim();
+		}
+
+		// Try document title
+		if (doc.title) {
+			return doc.title.split('|')[0].trim();
+		}
+
+		return undefined;
+	}
+
+	/**
+	 * Generates an excerpt from the content
+	 */
+	private static generateExcerpt(content: string): string | undefined {
+		const div = document.createElement('div');
+		div.innerHTML = content;
 		
-		const cleanElement = (el: Element) => {
-			// Remove all attributes except those in keepAttributes
-			Array.from(el.attributes).forEach(attr => {
-				if (!keepAttributes.includes(attr.name)) {
-					el.removeAttribute(attr.name);
-				}
-			});
+		// Try to find first paragraph
+		const firstP = div.querySelector('p');
+		if (firstP?.textContent) {
+			const text = firstP.textContent.trim();
+			return text.length > 160 ? text.slice(0, 157) + '...' : text;
+		}
 
-			// Recursively clean child elements
-			Array.from(el.children).forEach(child => cleanElement(child));
-		};
-
-		cleanElement(element);
+		// Fall back to first text content
+		const text = div.textContent?.trim() || '';
+		return text.length > 160 ? text.slice(0, 157) + '...' : text || undefined;
 	}
-} 
+
+	/**
+	 * Determines if an element is likely a content boundary (related articles, etc)
+	 */
+	private static isContentBoundary(element: Element): boolean {
+		const text = element.textContent || '';
+		const classAndId = (element.className + ' ' + element.id).toLowerCase();
+
+		// Check for common boundary section indicators
+		if (this.CONTENT_BOUNDARY_INDICATORS.test(classAndId)) {
+			return true;
+		}
+
+		// Check for high link density with list structure
+		const links = element.getElementsByTagName('a');
+		const lists = element.getElementsByTagName('ul');
+		if (links.length > 3 && lists.length > 0) {
+			const linkDensity = this.getLinkDensity(element);
+			if (linkDensity > 0.4) { // Threshold for link-heavy sections
+				return true;
+			}
+		}
+
+		// Check for repeated similar structures (common in related content)
+		const children = Array.from(element.children);
+		if (children.length > 2) {
+			const firstChild = children[0];
+			const similarChildren = children.filter(child => 
+				child.tagName === firstChild.tagName &&
+				Math.abs(child.textContent!.length - firstChild.textContent!.length) < 100
+			);
+			if (similarChildren.length > children.length * 0.7) { // 70% similar children
+				return true;
+			}
+		}
+
+		return false;
+	}
+}
