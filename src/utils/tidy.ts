@@ -5,6 +5,7 @@
  *    - Get all block-level elements from the document
  *    - Calculate metrics for each element (text density, link density, etc.)
  *    - Score and select the most promising content blocks
+ *    - If no good candidates found, fall back to entire document
  * 
  * 2. Score candidates
  *    - Text density: ratio of text to HTML markup, higher is better
@@ -113,7 +114,17 @@ export class Tidy {
 		]),
 
 		// Common metadata text patterns
-		text: /^(by|posted|published|updated|written by|author|date|on)\s*:?\s*/i
+		text: /^(by|posted|published|updated|written by|author|date|on)\s*:?\s*/i,
+
+		// Elements that should be preserved even if they match metadata patterns
+		preserve: new Set([
+			'cite',
+			'footnote',
+			'reference',
+			'bibliography',
+			'citation',
+			'endnote'
+		])
 	};
 
 	/**
@@ -128,6 +139,17 @@ export class Tidy {
 
 		// Find the most promising content blocks
 		const contentElements = this.findContentElements(elementMetrics);
+
+		// If no good candidates found, fall back to entire document
+		if (contentElements.length === 0) {
+			const docClone = doc.body.cloneNode(true) as Element;
+			this.cleanElement(docClone);
+			
+			return {
+				content: docClone.innerHTML,
+				excerpt: this.generateExcerpt(docClone.innerHTML)
+			};
+		}
 
 		// Extract and clean the content
 		const content = this.extractContent(contentElements);
@@ -654,8 +676,24 @@ export class Tidy {
 		const classAndId = (element.className + ' ' + element.id).toLowerCase();
 		const text = element.textContent?.trim() || '';
 
+		// Preserve citations and footnotes
+		if (element.tagName === 'CITE' || 
+			element.hasAttribute('cite') ||
+			classAndId.includes('footnote') ||
+			classAndId.includes('reference') ||
+			classAndId.includes('citation') ||
+			element.querySelector('cite, [cite], .footnote, .reference, .citation')) {
+			return false;
+		}
+
 		// Check class/id patterns
 		if (this.META_INDICATORS.patterns.test(classAndId)) {
+			// Double check it's not a preserved element
+			for (const term of this.META_INDICATORS.preserve) {
+				if (classAndId.includes(term)) {
+					return false;
+				}
+			}
 			return true;
 		}
 
@@ -669,16 +707,19 @@ export class Tidy {
 			return true;
 		}
 
-		// Check for typical metadata structure:
-		// - Short text with date/time format
-		// - Author name with links/images
-		// - Social media links
+		// Check for typical metadata structure
 		const hasDateTime = /\d{1,2}[:/-]\d{1,2}[:/-]\d{2,4}/.test(text) ||
 			element.querySelector('time, [datetime]') !== null;
 		const hasAuthorStructure = element.querySelector('a[href*="author"], img[alt*="author"], .author-avatar');
-		const hasSocialLinks = element.querySelectorAll('a[href*="twitter"], a[href*="facebook"], a[href*="linkedin"]').length > 0;
+		const hasSocialLinks = element.querySelectorAll('a[href*="twitter"], a[href*="x.com"], a[href*="bsky.app"], a[href*="facebook"], a[href*="linkedin"]').length > 0;
 
 		if ((hasDateTime || hasAuthorStructure || hasSocialLinks) && text.length < 200) {
+			// Final check for preserved elements
+			for (const term of this.META_INDICATORS.preserve) {
+				if (classAndId.includes(term)) {
+					return false;
+				}
+			}
 			return true;
 		}
 
